@@ -1,0 +1,19 @@
+{
+  "name": "Yerleştir!",
+  "short_name": "Yerleştir!",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#15A5EF",
+  "theme_color": "#15A5EF",
+  "description": "Çevrimdışı blok bulmaca",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "purpose": "any",
+      "sizes": "any",
+      "src": "favicon.svg",
+      "type": "image/svg+xml"
+    }
+  ]
+}

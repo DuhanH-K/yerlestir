@@ -1,0 +1,2 @@
+from pathlib import Path
+p=Path('test/widget_test.dart');s=p.read_text(encoding='utf-8');start=s.index("    await tester.scrollUntilVisible(\n      find.text('Sonraki')");end=s.index("    await tester.tap(find.text('Sonraki'));",start);s=s[:start]+"    expect(find.text('Sonraki').hitTestable(), findsOneWidget);\n    expect(find.byType(Scrollable), findsNothing);\n"+s[end:];p.write_text(s,encoding='utf-8')

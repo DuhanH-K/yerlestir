@@ -1,0 +1,3 @@
+from pathlib import Path
+p=Path('lib/features/daily_reward/reward_screen.dart');s=p.read_text(encoding='utf-8-sig').replace('Her yeni günde bir ödül. Yedi günü tamamla, döngüye yeniden başla. Kaçırdığın günlerde sıran kaybolmaz.', 'Her gün bir ödül. Kaçırdığın günlerde sıran kaybolmaz.').replace('One reward each new day. Complete seven days and start again. Missing a day does not reset your place.', 'A reward each day. Missing a day keeps your place.');p.write_text(s,encoding='utf-8')
+p=Path('test/widget_test.dart');s=p.read_text(encoding='utf-8');a=s.index("      if (path == '/reward')");b=s.index('      final scrollables',a);s=s[:a]+s[b:];p.write_text(s,encoding='utf-8')
