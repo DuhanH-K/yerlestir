@@ -13,22 +13,18 @@ final feedbackProvider = Provider<FeedbackService>((ref) {
 class FeedbackService {
   final _voice = AudioPlayer();
   final _effect = AudioPlayer();
+  final _burst = AudioPlayer();
   DateTime? _lastVoice;
   Future<void> celebrate(PlayerProgress settings, int combo) async {
-    if (!settings.soundEnabled) return;
+    if (!settings.soundEnabled || combo < 2) return;
     final now = DateTime.now();
     if (_lastVoice != null &&
         now.difference(_lastVoice!).inMilliseconds < 1100) {
       return;
     }
     _lastVoice = now;
-    final clip = combo >= 3
-        ? 'awesome'
-        : combo == 2
-        ? 'excellent'
-        : 'great';
     try {
-      await _voice.play(AssetSource('sounds/voice_$clip.mp3'), volume: .75);
+      await _voice.play(AssetSource('sounds/reference_combo.wav'), volume: .55);
     } catch (_) {}
   }
 
@@ -43,21 +39,23 @@ class FeedbackService {
     }
     try {
       await _effect.play(
-        AssetSource(clear ? 'sounds/clear.wav' : 'sounds/place.wav'),
-        volume: .4,
+        AssetSource(
+          clear ? 'sounds/reference_clear.wav' : 'sounds/reference_place.wav',
+        ),
+        volume: .55,
       );
     } catch (_) {}
   }
 
   Future<void> popLine(PlayerProgress settings, int count) async {
     if (settings.hapticsEnabled) {
-      HapticFeedback.lightImpact();
+      HapticFeedback.mediumImpact();
     }
     if (!settings.soundEnabled || count < 8 || count > 64) {
       return;
     }
     try {
-      await _effect.play(AssetSource('sounds/pop_$count.wav'), volume: .5);
+      await _burst.play(AssetSource('sounds/reference_clear.wav'), volume: .65);
     } catch (_) {}
   }
 
@@ -81,6 +79,7 @@ class FeedbackService {
   void dispose() {
     _voice.dispose();
     _effect.dispose();
+    _burst.dispose();
     _music.dispose();
   }
 }

@@ -19,10 +19,12 @@ class BlockTile extends StatelessWidget {
     super.key,
     this.preview = false,
     this.invalid = false,
+    this.board = false,
     this.skin = 'default',
   });
   final int value;
   final bool preview, invalid;
+  final bool board;
   final String skin;
   @override
   Widget build(BuildContext context) {
@@ -30,6 +32,9 @@ class BlockTile extends StatelessWidget {
     var color = value == 0
         ? style.empty
         : style.colors[(value - 1).clamp(0, 4)];
+    if (board && value != 0) color = Color.lerp(color, Colors.black, .25)!;
+    final highlightAmount = board ? .22 : .45;
+    final shadeAmount = board ? .2 : .13;
     if (invalid) {
       color = Colors.red;
     }
@@ -41,15 +46,21 @@ class BlockTile extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Color.lerp(color, Colors.white, value == 0 ? .08 : .45)!,
+            Color.lerp(
+              color,
+              Colors.white,
+              value == 0 ? .08 : highlightAmount,
+            )!,
             color,
-            Color.lerp(color, Colors.black, .13)!,
+            Color.lerp(color, Colors.black, shadeAmount)!,
           ],
         ),
         border: Border.all(
           color: preview
               ? Colors.white
-              : Colors.white.withValues(alpha: value == 0 ? .4 : .8),
+              : Colors.white.withValues(
+                  alpha: value == 0 ? (board ? .1 : .4) : (board ? .46 : .8),
+                ),
           width: preview ? 2.5 : 1.5,
         ),
         boxShadow: value == 0
@@ -57,7 +68,7 @@ class BlockTile extends StatelessWidget {
             : [
                 BoxShadow(
                   color: color.withValues(alpha: preview ? .8 : .4),
-                  blurRadius: preview ? 12 : 1,
+                  blurRadius: preview ? 12 : (board ? 3 : 1),
                   offset: const Offset(0, 2),
                 ),
               ],

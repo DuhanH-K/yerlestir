@@ -15,12 +15,16 @@ class BoardView extends StatefulWidget {
     required this.selected,
     required this.onDrop,
     required this.skin,
+    this.settleToken = 0,
+    this.placedCells = const {},
     this.hint,
   });
   final GameSession game;
   final int? selected;
   final void Function(int slot, int row, int col) onDrop;
   final String skin;
+  final int settleToken;
+  final Set<int> placedCells;
   final (int, int, int)? hint;
   @override
   State<BoardView> createState() => _BoardViewState();
@@ -139,18 +143,45 @@ class _BoardViewState extends State<BoardView> {
                           );
                         }
                       },
-                      child: Opacity(
-                        opacity: preview.contains(i)
-                            ? (hover == null ? .38 : .65)
-                            : 1,
-                        child: BlockTile(
-                          preview.contains(i)
-                              ? shape!.color
-                              : widget.game.board[i],
-                          preview: preview.contains(i) || completed.contains(i),
-                          invalid: preview.contains(i) && !valid,
-                          skin: widget.skin,
-                        ),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          if (widget.placedCells.contains(i) &&
+                              widget.game.board[i] != 0)
+                            _SettlingBlock(
+                              key: ValueKey('place-${widget.settleToken}-$i'),
+                              value: widget.game.board[i],
+                              skin: widget.skin,
+                              rank: widget.placedCells.toList().indexOf(i),
+                            )
+                          else
+                            BlockTile(
+                              widget.game.board[i],
+                              board: true,
+                              skin: widget.skin,
+                            ),
+                          if (completed.contains(i) && !preview.contains(i))
+                            Padding(
+                              padding: const EdgeInsets.all(2),
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: const Color(0xffffdf88),
+                                    width: 2,
+                                  ),
+                                  color: const Color(0x22ffdf88),
+                                ),
+                              ),
+                            ),
+                          if (preview.contains(i))
+                            _LandingOutline(
+                              valid: valid,
+                              occupied: widget.game.board[i] != 0,
+                              color: SkinStyle.of(widget.skin)
+                                  .colors[(shape!.color - 1).clamp(0, 4)],
+                            ),
+                        ],
                       ),
                     ),
                   ),
@@ -162,6 +193,112 @@ class _BoardViewState extends State<BoardView> {
       ),
     ),
   );
+}
+
+class _LandingOutline extends StatelessWidget {
+  const _LandingOutline({
+    required this.valid,
+    required this.occupied,
+    required this.color,
+  });
+  final bool valid, occupied;
+  final Color color;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.all(2),
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(6),
+        // Preserve the occupied block underneath instead of replacing its color.
+        color: valid
+            ? color.withValues(alpha: .4)
+            : occupied
+            ? Colors.transparent
+            : const Color(0x24ff566c),
+        border: Border.all(
+          color: valid ? const Color(0xffdcffff) : const Color(0xffff566c),
+          width: 2.5,
+        ),
+        boxShadow: valid
+            ? [BoxShadow(color: color.withValues(alpha: .38), blurRadius: 7)]
+            : const [],
+      ),
+      child: !valid && occupied
+          ? const Center(
+              child: Icon(
+                Icons.close_rounded,
+                size: 20,
+                color: Color(0xffff8998),
+              ),
+            )
+          : null,
+    ),
+  );
+}
+
+class _SettlingBlock extends StatelessWidget {
+  const _SettlingBlock({
+    super.key,
+    required this.value,
+    required this.skin,
+    required this.rank,
+  });
+  final int value, rank;
+  final String skin;
+  static final settle = TweenSequence<double>([
+    TweenSequenceItem(
+      tween: Tween(
+        begin: 1.0,
+        end: 1.08,
+      ).chain(CurveTween(curve: Curves.easeOutCubic)),
+      weight: 35,
+    ),
+    TweenSequenceItem(tween: Tween(begin: 1.08, end: .96), weight: 30),
+    TweenSequenceItem(
+      tween: Tween(
+        begin: .96,
+        end: 1.0,
+      ).chain(CurveTween(curve: Curves.easeOutCubic)),
+      weight: 35,
+    ),
+  ]);
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return BlockTile(value, skin: skin, board: true);
+    }
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: 240 + rank * 16),
+      child: BlockTile(value, skin: skin, board: true),
+      builder: (_, t, child) {
+        final total = 240 + rank * 16;
+        final p = ((t * total - rank * 16) / 240).clamp(0.0, 1.0);
+        return Transform.scale(
+          scale: settle.transform(p),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              child!,
+              if (p > 0 && p < 1)
+                Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: (1 - p) * .75),
+                        width: 1 + 2 * (1 - p),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 }
 
 class PieceTray extends StatelessWidget {
@@ -189,7 +326,9 @@ class PieceTray extends StatelessWidget {
             child: LayoutBuilder(
               builder: (context, bounds) {
                 final shape = game.pieces[i];
-                if (shape == null) return const SizedBox.expand();
+                if (shape == null) {
+                  return const SizedBox.expand();
+                }
                 final size = ((bounds.maxWidth - 12) / shape.width).clamp(
                   8.0,
                   ((bounds.maxHeight - 12) / shape.height).clamp(8.0, 25.0),

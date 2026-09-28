@@ -89,7 +89,7 @@ class _LiveScoreState extends State<LiveScore>
                 begin: previous.toDouble(),
                 end: widget.score.toDouble(),
               ),
-              duration: const Duration(milliseconds: 280),
+              duration: const Duration(milliseconds: 480),
               builder: (_, value, child) => Transform.scale(
                 scale: 1 + glow * .07,
                 child: FittedBox(

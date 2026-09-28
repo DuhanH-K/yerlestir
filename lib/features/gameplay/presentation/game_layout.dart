@@ -13,6 +13,7 @@ extension _GameLayout on _GameScreenState {
         backgroundColor: const Color(0xff294578),
         body: SkinBackdrop(
           skin: p.selectedSkin,
+          gameplay: true,
           child: SafeArea(
             child: Center(
               child: ConstrainedBox(
@@ -76,7 +77,7 @@ extension _GameLayout on _GameScreenState {
                                   Expanded(
                                     child: Center(
                                       child: LiveScore(
-                                        score: game.score,
+                                        score: displayedScore,
                                         best: p.highScore,
                                         compact: compact,
                                         english: p.localeCode == 'en',
@@ -115,6 +116,8 @@ extension _GameLayout on _GameScreenState {
                                       game: game,
                                       selected: selected,
                                       skin: p.selectedSkin,
+                                      settleToken: game.moves,
+                                      placedCells: placedCells,
                                       hint: hint,
                                       onDrop: drop,
                                     ),
@@ -133,53 +136,39 @@ extension _GameLayout on _GameScreenState {
                                       ),
                                     ),
                                   ),
-                                if (animating)
+                                for (final effect in clearEffects)
                                   Positioned.fill(
+                                    key: ValueKey('clear-${effect.id}'),
                                     child: Padding(
                                       padding: const EdgeInsets.all(boardInset),
                                       child: LineBurst(
-                                        key: ValueKey(game.moves),
-                                        cells: game.lastClearedCells,
-                                        points: game.lastScoreGain,
-                                        message: celebration,
-                                        detail: scoreDetail,
+                                        cells: effect.cells,
+                                        points: effect.points,
+                                        combo: effect.combo,
+                                        placementPoints: effect.placementPoints,
+                                        linePoints: effect.linePoints,
+                                        skin: p.selectedSkin,
+                                        english: p.localeCode == 'en',
+                                        onEnd: () {
+                                          if (mounted) {
+                                            updateUi(
+                                              () => clearEffects.remove(effect),
+                                            );
+                                          }
+                                        },
                                       ),
                                     ),
                                   ),
-                                if (!animating && showGain)
+                                if (showGain && clearEffects.isEmpty)
                                   Positioned.fill(
-                                    child: IgnorePointer(
-                                      child: Center(
-                                        child: TweenAnimationBuilder<double>(
-                                          key: ValueKey(game.moves),
-                                          tween: Tween(begin: 0, end: 1),
-                                          duration: const Duration(
-                                            milliseconds: 600,
-                                          ),
-                                          builder: (_, t, child) =>
-                                              Transform.translate(
-                                                offset: Offset(0, -28 * t),
-                                                child: Opacity(
-                                                  opacity: (1 - t).clamp(0, 1),
-                                                  child: Text(
-                                                    '+${game.lastScoreGain}',
-                                                    style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontWeight:
-                                                          FontWeight.w900,
-                                                      fontSize: 28,
-                                                      shadows: [
-                                                        Shadow(
-                                                          color: Colors.black54,
-                                                          blurRadius: 7,
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                        ),
-                                      ),
+                                    child: PlacementScore(
+                                      key: ValueKey('score-${game.moves}'),
+                                      points: game.lastScoreGain,
+                                      onEnd: () {
+                                        if (mounted) {
+                                          updateUi(() => showGain = false);
+                                        }
+                                      },
                                     ),
                                   ),
                               ],
@@ -188,15 +177,22 @@ extension _GameLayout on _GameScreenState {
                           SizedBox(
                             height: 28,
                             child: Center(
-                              child: Text(
-                                hintNotice ?? '',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Color(0xffffdc77),
-                                  fontSize: 12,
-                                ),
-                              ),
+                              child: hintNotice == null && game.moves > 0
+                                  ? LastMoveReceipt(
+                                      points: game.lastScoreGain,
+                                      combo: game.combo,
+                                      cleared: game.lastClearedCells.isNotEmpty,
+                                      english: p.localeCode == 'en',
+                                    )
+                                  : Text(
+                                      hintNotice ?? '',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Color(0xffffdc77),
+                                        fontSize: 12,
+                                      ),
+                                    ),
                             ),
                           ),
                           Expanded(

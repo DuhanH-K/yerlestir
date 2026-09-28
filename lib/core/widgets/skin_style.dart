@@ -68,8 +68,8 @@ class SkinStyle {
       ],
     ),
     _ => const SkinStyle(
-      Color(0xff345c94),
-      Color(0xff243d6b),
+      Color(0xff244f8e),
+      Color(0xff172c55),
       Color(0xff2b4266),
       [
         Color(0xff079efa),
@@ -83,7 +83,13 @@ class SkinStyle {
 }
 
 class SkinBackdrop extends StatelessWidget {
-  const SkinBackdrop({super.key, required this.skin, this.child});
+  const SkinBackdrop({
+    super.key,
+    required this.skin,
+    this.child,
+    this.gameplay = false,
+  });
+  final bool gameplay;
   final String skin;
   final Widget? child;
   @override
@@ -94,10 +100,17 @@ class SkinBackdrop extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [style.sky, style.base],
+          colors: gameplay
+              ? [
+                  Color.lerp(style.sky, const Color(0xff10243c), .55)!,
+                  const Color(0xff0b192d),
+                ]
+              : [style.sky, style.base],
         ),
       ),
-      child: CustomPaint(painter: _Landscape(skin), child: child),
+      child: gameplay
+          ? child
+          : CustomPaint(painter: _Landscape(skin), child: child),
     );
   }
 }

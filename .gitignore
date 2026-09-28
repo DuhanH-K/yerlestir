@@ -52,3 +52,16 @@ android/*.keystore
 
 # Widget Preview related
 .widget_preview/
+
+# Local reference captures, source archives and signing secrets
+/video_contact.jpg
+/video_frame_*.jpg
+/yerlestir-*.zip
+*.jks
+*.keystore
+*.p12
+*.p8
+*.mobileprovision
+*.ipa
+*.aab
+/android/.kotlin/

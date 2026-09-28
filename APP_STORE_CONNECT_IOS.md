@@ -86,7 +86,7 @@ Uygulama ilerlemesi ve ayarlar cihazda `shared_preferences` ile yerel tutulur; b
 ## Build bilgisi
 
 - Bundle ID: `com.yerlestir.game.yerlestir`
-- Version: `1.0.0`
-- Current build: `1`
+- Version: `1.0.1`
+- Current build: `2`
 - iOS production App ID: `ca-app-pub-4879558726064660~4522234287`
 - iOS production banner/interstitial/rewarded ID'leri Dart platform seçimiyle iOS release'te kullanılır.

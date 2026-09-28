@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -14,6 +16,7 @@ import 'result_screen.dart';
 import 'pause_dialog.dart';
 import 'line_burst.dart';
 import 'live_score.dart';
+import 'score_celebration.dart';
 import 'board_intro.dart';
 import 'game_ending.dart';
 import 'continue_dialog.dart';
@@ -46,13 +49,10 @@ class _GameScreenState extends ConsumerState<GameScreen>
   bool busy = false, paused = false, animating = false, purchasing = false;
   int rejections = 0;
   bool showGain = false, starting = false;
-  String get celebration => game.combo >= 3
-      ? 'Awesome!'
-      : game.combo == 2
-      ? 'Excellent!'
-      : 'Great!';
-  String get scoreDetail =>
-      '+${game.lastPlacementPoints} ${tr(ref, 'yerleştirme', 'placement')} +${game.lastLinePoints} ${tr(ref, 'çizgi', 'line')}\n${tr(ref, 'Kombo', 'Combo')} ×${game.combo}';
+  Timer? scoreTimer, soundTimer, comboSoundTimer;
+  int displayedScore = 0;
+  Set<int> placedCells = {};
+  final clearEffects = <_ClearEvent>[];
   String? hintNotice;
   (int, int, int)? hint;
   @override
@@ -78,10 +78,14 @@ class _GameScreenState extends ConsumerState<GameScreen>
     starting = game.moves == 0 && game != restored;
     hint = game.paidHint;
     selected = hint?.$1;
+    displayedScore = game.score;
   }
 
   @override
   void dispose() {
+    scoreTimer?.cancel();
+    soundTimer?.cancel();
+    comboSoundTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -131,6 +135,9 @@ class _GameScreenState extends ConsumerState<GameScreen>
     if (busy || starting || animating || paused || purchasing) {
       return;
     }
+    final shape = slot >= 0 && slot < game.pieces.length
+        ? game.pieces[slot]
+        : null;
     if (!game.drop(slot, row, col)) {
       setState(() => rejections++);
       if (ref.read(progressProvider).hapticsEnabled) {
@@ -140,32 +147,64 @@ class _GameScreenState extends ConsumerState<GameScreen>
     }
     final feedback = ref.read(feedbackProvider),
         settings = ref.read(progressProvider);
-    if (game.lastClearedCells.isNotEmpty) {
-      feedback.popLine(settings, game.lastClearedCells.length);
-      feedback.celebrate(settings, game.combo);
-    } else {
-      feedback.tap(settings);
+    final cleared = game.lastClearedCells.isNotEmpty;
+    feedback.tap(settings);
+    soundTimer?.cancel();
+    if (cleared) {
+      final count = game.lastClearedCells.length, combo = game.combo;
+      comboSoundTimer?.cancel();
+      soundTimer = Timer(const Duration(milliseconds: 300), () {
+        if (!mounted) return;
+        feedback.popLine(settings, count);
+      });
+      if (combo >= 2) {
+        // Keep the recording's clear -> celebration order, without overlapping
+        // the loud attacks of both excerpts.
+        comboSoundTimer = Timer(const Duration(milliseconds: 1080), () {
+          if (mounted) feedback.celebrate(ref.read(progressProvider), combo);
+        });
+      }
     }
     setState(() {
-      showGain = true;
+      placedCells = {
+        for (final c in shape!.cells) (row + c.row) * boardSize + col + c.col,
+      };
+      showGain = !cleared;
+      if (cleared) {
+        // One prominent card at a time. A new clear replaces the previous
+        // presentation; ordinary placements do not truncate a clear's card.
+        clearEffects
+          ..clear()
+          ..add(_ClearEvent(game));
+      }
       selected = null;
       hint = null;
       hintNotice = null;
       animating = game.lastClearedCells.isNotEmpty;
     });
     final move = game.moves;
-    Future<void>.delayed(const Duration(milliseconds: 600), () {
-      if (mounted && game.moves == move) setState(() => showGain = false);
+    scoreTimer?.cancel();
+    scoreTimer = Timer(Duration(milliseconds: cleared ? 720 : 180), () {
+      if (mounted && game.moves == move) {
+        setState(() => displayedScore = game.score);
+      }
     });
     await Future.wait([
       persist(),
       if (animating) Future<void>.delayed(lineBurstDuration),
     ]);
-    if (!mounted) {
+    if (!mounted || game.moves != move) {
       return;
     }
     setState(() => animating = false);
     if (game.finished) {
+      // Finish only after the short score lettering has left the board.
+      await Future<void>.delayed(
+        cleared
+            ? clearFeedbackDuration - lineBurstDuration
+            : placementFeedbackDuration,
+      );
+      if (!mounted) return;
       final ads = ref.read(adProvider);
       if (game.canContinue && ads.enabled) {
         setState(() => purchasing = true);
@@ -342,4 +381,16 @@ class _GameScreenState extends ConsumerState<GameScreen>
         ),
     ],
   );
+}
+
+class _ClearEvent {
+  _ClearEvent(GameSession game)
+    : id = game.moves,
+      cells = Map.unmodifiable(game.lastClearedCells),
+      points = game.lastScoreGain,
+      combo = game.combo,
+      placementPoints = game.lastPlacementPoints,
+      linePoints = game.lastLinePoints;
+  final int id, points, combo, placementPoints, linePoints;
+  final Map<int, int> cells;
 }

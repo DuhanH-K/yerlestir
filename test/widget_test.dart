@@ -234,6 +234,9 @@ void main() {
     await tester.tap(find.bySemanticsLabel('Row 1, column 1, empty'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    // The last move's points remain readable before the ending overlay.
+    expect(find.byType(GameEnding), findsNothing);
+    await tester.pump(const Duration(milliseconds: 1200));
     expect(find.byType(GameEnding), findsOneWidget);
     expect(find.byType(BoardView), findsOneWidget);
     expect(find.text('Sonraki'), findsNothing);
