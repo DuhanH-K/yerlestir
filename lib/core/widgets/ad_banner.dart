@@ -27,7 +27,7 @@ class _NativeBanner extends StatefulWidget {
 
 class _NativeBannerState extends State<_NativeBanner> {
   BannerAd? _ad;
-  bool loaded = false;
+  bool loaded = false, _loading = false;
   int _width = 0, _generation = 0, _failures = 0;
   Timer? _retry;
   @override
@@ -46,6 +46,8 @@ class _NativeBannerState extends State<_NativeBanner> {
   }
 
   Future<void> _load(int generation) async {
+    if (_loading || _ad != null) return;
+    _loading = true;
     try {
       // Compact anchored banners preserve room for the board and tray.
       final size =
@@ -57,29 +59,35 @@ class _NativeBannerState extends State<_NativeBanner> {
           generation != _generation ||
           size == null ||
           GameAds.bannerId.isEmpty) {
+        _loading = false;
         return;
       }
+      GameAds.log('Banner', 'load requested');
       final ad = BannerAd(
         adUnitId: GameAds.bannerId,
         size: size,
         request: const AdRequest(),
         listener: BannerAdListener(
           onAdLoaded: (ad) {
+            _loading = false;
             if (!mounted || generation != _generation) {
               ad.dispose();
               return;
             }
             _failures = 0;
             setState(() => loaded = true);
-            debugPrint('Banner loaded');
+            GameAds.log('Banner', 'loaded');
           },
+          onAdImpression: (_) => GameAds.log('Banner', 'impression'),
           onAdFailedToLoad: (ad, error) {
+            _loading = false;
             ad.dispose();
             if (!mounted || generation != _generation) return;
             _ad = null;
             setState(() => loaded = false);
-            debugPrint('Banner unavailable: ${error.code}');
-            if (++_failures <= 3) {
+            GameAds.logLoadError('Banner', error);
+            // iOS no-fill should not become four requests for one screen.
+            if (!GameAds.isIOS && ++_failures <= 3) {
               _retry = Timer(
                 Duration(seconds: 30 * _failures),
                 () => unawaited(_load(generation)),
@@ -90,7 +98,9 @@ class _NativeBannerState extends State<_NativeBanner> {
       );
       _ad = ad;
       await ad.load();
-    } catch (_) {
+    } catch (error) {
+      _loading = false;
+      GameAds.log('Banner', 'load exception: $error');
       /* No network/platform: keep the game usable without a blank bar. */
     }
   }

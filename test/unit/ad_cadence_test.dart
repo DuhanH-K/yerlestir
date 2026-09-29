@@ -21,4 +21,56 @@ void main() {
     cadence.completeRound(12);
     expect(cadence.eligible(start.add(const Duration(seconds: 179))), isTrue);
   });
+
+  test('platform IDs stay separated in debug and production', () {
+    expect(AdUnitIds.banner(AdPlatform.ios, test: false), AdUnitIds.iosBanner);
+    expect(
+      AdUnitIds.interstitial(AdPlatform.ios, test: false),
+      AdUnitIds.iosInterstitial,
+    );
+    expect(
+      AdUnitIds.rewarded(AdPlatform.ios, test: false),
+      AdUnitIds.iosRewarded,
+    );
+    expect(
+      AdUnitIds.banner(AdPlatform.android, test: false),
+      AdUnitIds.androidBanner,
+    );
+    expect(
+      AdUnitIds.interstitial(AdPlatform.android, test: false),
+      AdUnitIds.androidInterstitial,
+    );
+    expect(
+      AdUnitIds.rewarded(AdPlatform.android, test: false),
+      AdUnitIds.androidRewarded,
+    );
+    expect(
+      AdUnitIds.banner(AdPlatform.ios, test: true),
+      AdUnitIds.iosTestBanner,
+    );
+    expect(
+      AdUnitIds.banner(AdPlatform.android, test: true),
+      AdUnitIds.androidTestBanner,
+    );
+  });
+
+  test('load state rejects duplicate load and ready requests', () {
+    final state = AdLoadState();
+
+    expect(state.beginLoad(), isTrue);
+    expect(state.beginLoad(), isFalse);
+    state.loaded();
+    expect(state.beginLoad(), isFalse);
+    expect(state.beginShow(), isTrue);
+    expect(state.beginShow(), isFalse);
+    state.finished();
+    expect(state.beginLoad(), isTrue);
+  });
+
+  test('disabled ads do not initialize a platform SDK', () async {
+    final ads = GameAds(enabled: false);
+    await ads.initialize();
+    expect(ads.ready, isFalse);
+    ads.dispose();
+  });
 }
