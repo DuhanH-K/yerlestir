@@ -107,8 +107,12 @@ class AdUnitIds {
 
   static String _production(String override, String fallback, String format) {
     final value = override == _unset ? fallback : override.trim();
-    if (value.isEmpty || value.startsWith(_googleTestPublisher)) {
-      throw StateError('Invalid production AdMob $format unit ID.');
+    if (value.isEmpty ||
+        value.startsWith(_googleTestPublisher) ||
+        value != fallback) {
+      throw StateError(
+        'Invalid production AdMob $format unit ID for this platform.',
+      );
     }
     return value;
   }
