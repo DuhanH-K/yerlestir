@@ -37,6 +37,8 @@ class _NativeBannerState extends State<_NativeBanner> {
     if (width != _width) {
       _width = width;
       loaded = false;
+      _loading = false;
+      _failures = 0;
       _retry?.cancel();
       final old = _ad;
       _ad = null;
@@ -46,7 +48,18 @@ class _NativeBannerState extends State<_NativeBanner> {
   }
 
   Future<void> _load(int generation) async {
-    if (_loading || _ad != null) return;
+    if (!mounted || generation != _generation || _loading || _ad != null) {
+      return;
+    }
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if ((lifecycle != null && lifecycle != AppLifecycleState.resumed) ||
+        ModalRoute.of(context)?.isCurrent == false) {
+      _retry = Timer(
+        const Duration(seconds: 30),
+        () => unawaited(_load(generation)),
+      );
+      return;
+    }
     _loading = true;
     try {
       // Compact anchored banners preserve room for the board and tray.
@@ -59,7 +72,7 @@ class _NativeBannerState extends State<_NativeBanner> {
           generation != _generation ||
           size == null ||
           GameAds.bannerId.isEmpty) {
-        _loading = false;
+        if (generation == _generation) _loading = false;
         return;
       }
       GameAds.log('Banner', 'load requested');
@@ -69,40 +82,45 @@ class _NativeBannerState extends State<_NativeBanner> {
         request: const AdRequest(),
         listener: BannerAdListener(
           onAdLoaded: (ad) {
-            _loading = false;
             if (!mounted || generation != _generation) {
               ad.dispose();
               return;
             }
+            _loading = false;
+            _retry?.cancel();
             _failures = 0;
             setState(() => loaded = true);
             GameAds.log('Banner', 'loaded');
           },
           onAdImpression: (_) => GameAds.log('Banner', 'impression'),
           onAdFailedToLoad: (ad, error) {
-            _loading = false;
             ad.dispose();
             if (!mounted || generation != _generation) return;
+            _loading = false;
             _ad = null;
             setState(() => loaded = false);
             GameAds.logLoadError('Banner', error);
-            // iOS no-fill should not become four requests for one screen.
-            if (!GameAds.isIOS && ++_failures <= 3) {
-              _retry = Timer(
-                Duration(seconds: 30 * _failures),
-                () => unawaited(_load(generation)),
-              );
-            }
+            _scheduleRetry(generation);
           },
         ),
       );
       _ad = ad;
       await ad.load();
     } catch (error) {
+      if (!mounted || generation != _generation) return;
       _loading = false;
+      _ad?.dispose();
+      _ad = null;
+      _scheduleRetry(generation);
       GameAds.log('Banner', 'load exception: $error');
       /* No network/platform: keep the game usable without a blank bar. */
     }
+  }
+
+  void _scheduleRetry(int generation) {
+    _retry?.cancel();
+    final delay = Duration(seconds: 30 * (1 << (_failures++).clamp(0, 2)));
+    _retry = Timer(delay, () => unawaited(_load(generation)));
   }
 
   @override

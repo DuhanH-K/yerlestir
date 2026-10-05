@@ -6,7 +6,7 @@ import '../../../core/widgets/skin_style.dart';
 import 'score_celebration.dart';
 
 // Input resumes when the last tile dissolves; particles and text continue.
-const lineBurstDuration = Duration(milliseconds: 650);
+const lineBurstDuration = Duration(milliseconds: 260);
 const clearPresentationDuration = clearFeedbackDuration;
 
 class LineBurst extends StatefulWidget {
@@ -133,9 +133,9 @@ class ClearChoreography {
       );
       // Horizontal sweeps run left to right; vertical sweeps top to bottom.
       starts[entry.key] = crossing.isEmpty
-          ? 300
+          ? 90
           : crossing
-                .map((line) => 300.0 + (line.vertical ? row : col) * 28)
+                .map((line) => 90.0 + (line.vertical ? row : col) * 12)
                 .reduce(math.min);
     }
     final random = math.Random(source.keys.fold<int>(17, (a, b) => a * 31 + b));
@@ -181,7 +181,7 @@ class _ClearPainter extends CustomPainter {
     if (ms > 1350) return;
     final cell = size.width / 8;
     if (reduced) {
-      final alpha = 1 - phase(ms, 150, 350);
+      final alpha = 1 - phase(ms, 60, 180);
       for (final entry in effect.cells.entries) {
         fill.color = effect.colors[entry.key]!.withValues(alpha: alpha);
         canvas.drawRRect(
@@ -204,13 +204,13 @@ class _ClearPainter extends CustomPainter {
     // has already removed them, so this layer owns their visible dissolution.
     for (final entry in effect.cells.entries) {
       final start = effect.starts[entry.key]!;
-      final dissolve = phase(ms, start, 130);
+      final dissolve = phase(ms, start, 80);
       if (dissolve >= 1) continue;
       final center = Offset(
         (entry.key % 8 + .5) * cell,
         (entry.key ~/ 8 + .5) * cell,
       );
-      final charge = phase(ms, 160, 140);
+      final charge = phase(ms, 0, 90);
       final scale = 1 + .05 * math.sin(charge * math.pi / 2) - dissolve * .25;
       final rect = Rect.fromCenter(
         center: center,

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
@@ -152,8 +153,10 @@ class AdLoadState {
   void finished() => isShowing = false;
 }
 
-class GameAds extends ChangeNotifier {
-  GameAds({required this.enabled});
+class GameAds extends ChangeNotifier with WidgetsBindingObserver {
+  GameAds({required this.enabled}) {
+    if (enabled) WidgetsBinding.instance.addObserver(this);
+  }
   final bool enabled;
   // A release build can never be switched to Google's demo units by CI flags.
   static const testMode =
@@ -174,7 +177,46 @@ class GameAds extends ChangeNotifier {
   RewardedAd? _rewarded;
   Future<void>? _rewardLoad;
   Future<void>? _initialization;
-  DateTime? _nextIOSInterstitialLoad;
+  int _consentGeneration = 0;
+  DateTime? _nextInterstitialLoad, _nextRewardLoad;
+  DateTime? _interstitialLoadedAt, _rewardedLoadedAt;
+  Timer? _rewardRetry, _initializationRetry;
+  int _rewardFailures = 0;
+  bool get _foreground =>
+      WidgetsBinding.instance.lifecycleState == null ||
+      WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+  static const _cacheLifetime = Duration(minutes: 55);
+  Duration _backoff(int failures) =>
+      Duration(seconds: 30 * (1 << (failures - 1).clamp(0, 2)));
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !_disposed) {
+      if (!ready) {
+        unawaited(initialize());
+      } else {
+        unawaited(preload());
+        unawaited(preloadRewarded());
+      }
+    }
+  }
+
+  void _retryReward() {
+    if (_disposed) return;
+    final delay = _backoff(++_rewardFailures);
+    _nextRewardLoad = DateTime.now().add(delay);
+    _rewardRetry?.cancel();
+    _rewardRetry = Timer(delay, () => unawaited(preloadRewarded()));
+  }
+
+  void _retryInterstitial() {
+    if (_disposed) return;
+    final delay = _backoff(++_failures);
+    _nextInterstitialLoad = DateTime.now().add(delay);
+    _retry?.cancel();
+    _retry = Timer(delay, () => unawaited(preload()));
+  }
+
   final interstitialState = AdLoadState();
   static String get rewardedId => AdUnitIds.rewarded(platform, test: testMode);
 
@@ -194,7 +236,20 @@ class GameAds extends ChangeNotifier {
   }
 
   Future<void> preloadRewarded() {
-    if (!ready || _disposed || _rewarded != null || rewardedId.isEmpty) {
+    if (_rewarded != null &&
+        _rewardedLoadedAt != null &&
+        DateTime.now().difference(_rewardedLoadedAt!) >= _cacheLifetime) {
+      _rewarded?.dispose();
+      _rewarded = null;
+    }
+    if (!ready ||
+        _disposed ||
+        !_foreground ||
+        _rewarded != null ||
+        showing ||
+        (_nextRewardLoad != null &&
+            DateTime.now().isBefore(_nextRewardLoad!)) ||
+        rewardedId.isEmpty) {
       return Future.value();
     }
     return _rewardLoad ??= _loadRewarded().whenComplete(
@@ -203,6 +258,7 @@ class GameAds extends ChangeNotifier {
   }
 
   Future<void> _loadRewarded() async {
+    final generation = _consentGeneration;
     final done = Completer<void>();
     try {
       log('Rewarded', 'load requested');
@@ -211,29 +267,38 @@ class GameAds extends ChangeNotifier {
         request: const AdRequest(),
         rewardedAdLoadCallback: RewardedAdLoadCallback(
           onAdLoaded: (ad) {
-            if (_disposed) {
+            if (_disposed || !ready || generation != _consentGeneration) {
               ad.dispose();
             } else {
               _rewarded = ad;
+              _rewardedLoadedAt = DateTime.now();
+              _rewardFailures = 0;
+              _nextRewardLoad = null;
+              _rewardRetry?.cancel();
               log('Rewarded', 'loaded');
             }
             if (!done.isCompleted) done.complete();
           },
           onAdFailedToLoad: (error) {
             logLoadError('Rewarded', error);
+            _retryReward();
             if (!done.isCompleted) done.complete();
           },
         ),
       );
-      await done.future.timeout(const Duration(seconds: 10));
+      await done.future;
     } catch (error) {
       log('Rewarded', 'load exception: $error');
+      _retryReward();
     }
   }
 
   Future<bool> showContinueReward() async {
     if (!ready || showing || _disposed) return false;
-    await preloadRewarded();
+    await preloadRewarded().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {},
+    );
     if (_disposed || showing) return false;
     final ad = _rewarded;
     if (ad == null) return false;
@@ -246,7 +311,7 @@ class GameAds extends ChangeNotifier {
       ad.dispose();
       showing = false;
       done.complete(earned);
-      if (!_disposed && !isIOS) unawaited(preloadRewarded());
+      if (!_disposed) unawaited(preloadRewarded());
     }
 
     ad.fullScreenContentCallback = FullScreenContentCallback(
@@ -280,7 +345,12 @@ class GameAds extends ChangeNotifier {
   Timer? _retry;
   int _failures = 0;
 
-  Future<void> initialize() => _initialization ??= _initialize();
+  Future<void> initialize() {
+    if (ready || _disposed) return Future.value();
+    return _initialization ??= _initialize().whenComplete(
+      () => _initialization = null,
+    );
+  }
 
   Future<void> _initialize() async {
     if (!enabled ||
@@ -309,9 +379,13 @@ class GameAds extends ChangeNotifier {
             if (!done.isCompleted) done.complete();
           },
         );
-        await done.future.timeout(const Duration(seconds: 20));
+        await done.future.timeout(
+          const Duration(seconds: 20),
+          onTimeout: () {},
+        );
         if (!await ConsentInformation.instance.canRequestAds()) {
           log('UMP', 'canRequestAds=false; ad loading stopped');
+          _scheduleInitializationRetry();
           return;
         }
         privacyRequired =
@@ -325,15 +399,32 @@ class GameAds extends ChangeNotifier {
       log('SDK', 'initialized once');
       notifyListeners();
       unawaited(preload());
-      // On iOS rewarded is loaded only after an explicit user action.
-      if (!isIOS) unawaited(preloadRewarded());
+      unawaited(preloadRewarded());
     } catch (error) {
-      debugPrint('Ads initialization unavailable: $error');
+      log('SDK', 'initialization unavailable: $error');
+      _scheduleInitializationRetry();
     }
   }
 
+  void _scheduleInitializationRetry() {
+    if (_disposed) return;
+    _initializationRetry?.cancel();
+    _initializationRetry = Timer(const Duration(minutes: 2), () {
+      if (_foreground) unawaited(initialize());
+    });
+  }
+
   Future<void> preload() async {
+    if (_interstitial != null &&
+        _interstitialLoadedAt != null &&
+        DateTime.now().difference(_interstitialLoadedAt!) >= _cacheLifetime) {
+      _interstitial?.dispose();
+      _interstitial = null;
+      interstitialState.reset();
+    }
     if (!ready ||
+        !_foreground ||
+        showing ||
         _disposed ||
         _loading ||
         _interstitial != null ||
@@ -342,14 +433,13 @@ class GameAds extends ChangeNotifier {
       return;
     }
     final now = DateTime.now();
-    if (isIOS &&
-        _nextIOSInterstitialLoad != null &&
-        now.isBefore(_nextIOSInterstitialLoad!)) {
+    if (_nextInterstitialLoad != null && now.isBefore(_nextInterstitialLoad!)) {
       interstitialState.failed();
-      log('Interstitial', 'load skipped during iOS no-fill cooldown');
+      log('Interstitial', 'load skipped during retry cooldown');
       return;
     }
     _loading = true;
+    final generation = _consentGeneration;
     try {
       log('Interstitial', 'load requested');
       await InterstitialAd.load(
@@ -358,14 +448,17 @@ class GameAds extends ChangeNotifier {
         adLoadCallback: InterstitialAdLoadCallback(
           onAdLoaded: (ad) {
             _loading = false;
-            if (_disposed) {
+            if (_disposed || !ready || generation != _consentGeneration) {
               ad.dispose();
               interstitialState.reset();
+              if (!_disposed && ready) unawaited(preload());
               return;
             }
             interstitialState.loaded();
             _failures = 0;
-            _nextIOSInterstitialLoad = null;
+            _nextInterstitialLoad = null;
+            _retry?.cancel();
+            _interstitialLoadedAt = DateTime.now();
             _interstitial = ad;
             log('Interstitial', 'loaded');
           },
@@ -373,18 +466,7 @@ class GameAds extends ChangeNotifier {
             _loading = false;
             interstitialState.failed();
             logLoadError('Interstitial', error);
-            if (isIOS) {
-              // Avoid turning an iOS no-fill into several background requests.
-              _nextIOSInterstitialLoad = DateTime.now().add(
-                const Duration(minutes: 2),
-              );
-            } else if (!_disposed && ++_failures <= 3) {
-              _retry?.cancel();
-              _retry = Timer(
-                Duration(seconds: 30 * _failures),
-                () => unawaited(preload()),
-              );
-            }
+            _retryInterstitial();
           },
         ),
       );
@@ -392,6 +474,7 @@ class GameAds extends ChangeNotifier {
       _loading = false;
       interstitialState.failed();
       log('Interstitial', 'load exception: $error');
+      _retryInterstitial();
     }
   }
 
@@ -404,6 +487,12 @@ class GameAds extends ChangeNotifier {
         !cadence.eligible(DateTime.now())) {
       return;
     }
+    if (_interstitialLoadedAt != null &&
+        DateTime.now().difference(_interstitialLoadedAt!) >= _cacheLifetime) {
+      _interstitial?.dispose();
+      _interstitial = null;
+      interstitialState.reset();
+    }
     final ad = _interstitial;
     if (ad == null) {
       unawaited(preload());
@@ -414,6 +503,7 @@ class GameAds extends ChangeNotifier {
     showing = true;
     final done = Completer<void>();
     void finish() {
+      if (done.isCompleted) return;
       ad.dispose();
       showing = false;
       interstitialState.finished();
@@ -445,20 +535,33 @@ class GameAds extends ChangeNotifier {
   }
 
   Future<void> privacyOptions() async {
-    if (!privacyRequired) return;
+    if (!privacyRequired || showing) return;
+    ready = false;
+    _consentGeneration++;
+    _retry?.cancel();
+    _rewardRetry?.cancel();
+    _rewarded?.dispose();
+    _rewarded = null;
+    notifyListeners();
     await ConsentForm.showPrivacyOptionsForm((error) {});
     ready = await ConsentInformation.instance.canRequestAds();
     if (!_disposed) notifyListeners();
     _interstitial?.dispose();
     _interstitial = null;
     interstitialState.reset();
-    if (ready) unawaited(preload());
+    if (ready) {
+      unawaited(preload());
+      unawaited(preloadRewarded());
+    }
   }
 
   @override
   void dispose() {
     _disposed = true;
+    if (enabled) WidgetsBinding.instance.removeObserver(this);
     _retry?.cancel();
+    _rewardRetry?.cancel();
+    _initializationRetry?.cancel();
     _interstitial?.dispose();
     _rewarded?.dispose();
     interstitialState.reset();

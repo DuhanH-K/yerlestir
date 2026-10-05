@@ -184,15 +184,14 @@ class _GameScreenState extends ConsumerState<GameScreen>
     });
     final move = game.moves;
     scoreTimer?.cancel();
-    scoreTimer = Timer(Duration(milliseconds: cleared ? 720 : 180), () {
+    scoreTimer = Timer(Duration(milliseconds: cleared ? 120 : 60), () {
       if (mounted && game.moves == move) {
         setState(() => displayedScore = game.score);
       }
     });
-    await Future.wait([
-      persist(),
-      if (animating) Future<void>.delayed(lineBurstDuration),
-    ]);
+    // Saves already queue immutable snapshots; disk writes never hold input.
+    unawaited(persist());
+    if (animating) await Future<void>.delayed(lineBurstDuration);
     if (!mounted || game.moves != move) {
       return;
     }

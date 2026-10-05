@@ -180,7 +180,20 @@ void main() {
         await tester.pump();
         await tester.tap(find.bySemanticsLabel('Row 1, column 8, empty'));
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 350));
+        await tester.pump(const Duration(milliseconds: 270));
+        final quickMove = tester
+            .widget<BoardView>(find.byType(BoardView))
+            .game
+            .moves;
+        await tester.tap(find.byType(Draggable<int>).first);
+        await tester.pump();
+        await tester.tap(find.bySemanticsLabel('Row 3, column 2, empty'));
+        await tester.pump();
+        expect(
+          tester.widget<BoardView>(find.byType(BoardView)).game.moves,
+          quickMove + 1,
+        );
+        await tester.pump(const Duration(milliseconds: 80));
         await capture('02-sweep');
         await tester.pump(const Duration(milliseconds: 450));
         await capture('03-combo');
