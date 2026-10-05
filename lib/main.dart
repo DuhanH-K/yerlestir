@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app/app.dart';
 import 'features/progress/progress.dart';
 import 'core/services/ad_service.dart';
+import 'core/services/analytics_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,4 +36,6 @@ Future<void> main() async {
       child: const YerlestirApp(),
     ),
   );
+  // The game paints immediately; Analytics is independent of the ad flow.
+  unawaited(IosAnalytics().initialize());
 }
