@@ -178,6 +178,7 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
   Future<void>? _rewardLoad;
   Future<void>? _initialization;
   int _consentGeneration = 0;
+  bool _privacyUpdating = false;
   DateTime? _nextInterstitialLoad, _nextRewardLoad;
   DateTime? _interstitialLoadedAt, _rewardedLoadedAt;
   Timer? _rewardRetry, _initializationRetry;
@@ -222,17 +223,18 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
 
   static void log(String format, String event) {
     if (kDebugMode) {
-      debugPrint('[ADS][${isIOS ? 'iOS' : 'Android'}][$format] $event');
+      debugPrint(
+        '[ADS][${DateTime.now().toUtc().toIso8601String()}][${isIOS ? 'iOS' : 'Android'}][$format] $event',
+      );
     }
   }
 
   static void logLoadError(String format, LoadAdError error) {
     if (!kDebugMode) return;
-    log(format, 'failed');
-    debugPrint('  code: ${error.code}');
-    debugPrint('  domain: ${error.domain}');
-    debugPrint('  message: ${error.message}');
-    debugPrint('  responseInfo: ${error.responseInfo}');
+    log(
+      format,
+      'load_fail code=${error.code} domain=${error.domain} message=${error.message}',
+    );
   }
 
   Future<void> preloadRewarded() {
@@ -252,16 +254,21 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
         rewardedId.isEmpty) {
       return Future.value();
     }
-    return _rewardLoad ??= _loadRewarded().whenComplete(
-      () => _rewardLoad = null,
-    );
+    if (_rewardLoad != null) return _rewardLoad!;
+    final generation = _consentGeneration;
+    return _rewardLoad = _loadRewarded().whenComplete(() {
+      _rewardLoad = null;
+      if (!_disposed && ready && generation != _consentGeneration) {
+        unawaited(preloadRewarded());
+      }
+    });
   }
 
   Future<void> _loadRewarded() async {
     final generation = _consentGeneration;
     final done = Completer<void>();
     try {
-      log('Rewarded', 'load requested');
+      log('Rewarded', 'load_start');
       await RewardedAd.load(
         adUnitId: rewardedId,
         request: const AdRequest(),
@@ -275,7 +282,7 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
               _rewardFailures = 0;
               _nextRewardLoad = null;
               _rewardRetry?.cancel();
-              log('Rewarded', 'loaded');
+              log('Rewarded', 'load_success');
             }
             if (!done.isCompleted) done.complete();
           },
@@ -288,20 +295,33 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
       );
       await done.future;
     } catch (error) {
-      log('Rewarded', 'load exception: $error');
+      log('Rewarded', 'load_fail exception=${error.runtimeType}');
       _retryReward();
     }
   }
 
   Future<bool> showContinueReward() async {
-    if (!ready || showing || _disposed) return false;
+    log('Rewarded', 'show_attempt');
+    final before = _showBlockedReason();
+    if (before != null) {
+      log('Rewarded', 'show_skipped reason=$before');
+      return false;
+    }
     await preloadRewarded().timeout(
       const Duration(seconds: 10),
       onTimeout: () {},
     );
-    if (_disposed || showing) return false;
+    // Loading can outlive consent changes, another ad, or backgrounding.
+    final after = _showBlockedReason();
+    if (after != null) {
+      log('Rewarded', 'show_skipped reason=$after');
+      return false;
+    }
     final ad = _rewarded;
-    if (ad == null) return false;
+    if (ad == null) {
+      log('Rewarded', 'show_skipped reason=not_loaded');
+      return false;
+    }
     _rewarded = null;
     showing = true;
     var earned = false;
@@ -316,27 +336,32 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
 
     ad.fullScreenContentCallback = FullScreenContentCallback(
       onAdShowedFullScreenContent: (_) {
-        log('Rewarded', 'shown');
+        log('Rewarded', 'ad_showed');
         cadence.shown(DateTime.now());
       },
       onAdDismissedFullScreenContent: (_) {
-        log('Rewarded', 'dismissed; earned=$earned');
+        log('Rewarded', 'ad_dismissed earned=$earned');
         finish();
       },
       onAdImpression: (_) => log('Rewarded', 'impression'),
       onAdFailedToShowFullScreenContent: (_, error) {
-        log('Rewarded', 'show failed: ${error.code} ${error.message}');
+        log(
+          'Rewarded',
+          'show_fail code=${error.code} domain=${error.domain} message=${error.message}',
+        );
         finish();
       },
     );
     try {
       await ad.show(
         onUserEarnedReward: (_, reward) {
+          if (earned || done.isCompleted) return;
           earned = true;
-          log('Rewarded', 'reward earned');
+          log('Rewarded', 'reward_earned');
         },
       );
-    } catch (_) {
+    } catch (error) {
+      log('Rewarded', 'show_fail exception=${error.runtimeType}');
       finish();
     }
     return done.future;
@@ -346,7 +371,7 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
   int _failures = 0;
 
   Future<void> initialize() {
-    if (ready || _disposed) return Future.value();
+    if (ready || _disposed || _privacyUpdating) return Future.value();
     return _initialization ??= _initialize().whenComplete(
       () => _initialization = null,
     );
@@ -370,6 +395,8 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
               await ConsentForm.loadAndShowConsentFormIfRequired((error) {
                 if (error != null) log('UMP', 'form error: ${error.message}');
               });
+            } catch (error) {
+              log('UMP', 'form exception=${error.runtimeType}');
             } finally {
               if (!done.isCompleted) done.complete();
             }
@@ -379,10 +406,10 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
             if (!done.isCompleted) done.complete();
           },
         );
-        await done.future.timeout(
-          const Duration(seconds: 20),
-          onTimeout: () {},
-        );
+        // A consent form may legitimately stay open longer than 20 seconds.
+        // Keep the single initialization pending until UMP finishes it.
+        await done.future;
+        if (_disposed) return;
         if (!await ConsentInformation.instance.canRequestAds()) {
           log('UMP', 'canRequestAds=false; ad loading stopped');
           _scheduleInitializationRetry();
@@ -441,7 +468,7 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
     _loading = true;
     final generation = _consentGeneration;
     try {
-      log('Interstitial', 'load requested');
+      log('Interstitial', 'load_start');
       await InterstitialAd.load(
         adUnitId: interstitialId,
         request: const AdRequest(),
@@ -460,7 +487,7 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
             _retry?.cancel();
             _interstitialLoadedAt = DateTime.now();
             _interstitial = ad;
-            log('Interstitial', 'loaded');
+            log('Interstitial', 'load_success');
           },
           onAdFailedToLoad: (error) {
             _loading = false;
@@ -473,18 +500,25 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
     } catch (error) {
       _loading = false;
       interstitialState.failed();
-      log('Interstitial', 'load exception: $error');
+      log('Interstitial', 'load_fail exception=${error.runtimeType}');
       _retryInterstitial();
     }
   }
 
   Future<void> showAtBreak(int moves) async {
     cadence.completeRound(moves);
-    if (moves < 3 ||
-        !ready ||
-        showing ||
-        _disposed ||
-        !cadence.eligible(DateTime.now())) {
+    log('Interstitial', 'show_attempt moves=$moves rounds=${cadence.rounds}');
+    final reason =
+        _showBlockedReason() ??
+        (moves < 3
+            ? 'moves_below_3'
+            : cadence.rounds < AdCadence.minRoundsBeforeInterstitial
+            ? 'rounds_below_2'
+            : !cadence.eligible(DateTime.now())
+            ? 'cooldown_90s'
+            : null);
+    if (reason != null) {
+      log('Interstitial', 'show_skipped reason=$reason');
       return;
     }
     if (_interstitialLoadedAt != null &&
@@ -495,10 +529,14 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
     }
     final ad = _interstitial;
     if (ad == null) {
+      log('Interstitial', 'show_skipped reason=not_loaded');
       unawaited(preload());
       return;
     }
-    if (!interstitialState.beginShow()) return;
+    if (!interstitialState.beginShow()) {
+      log('Interstitial', 'show_skipped reason=state_not_ready');
+      return;
+    }
     _interstitial = null;
     showing = true;
     final done = Completer<void>();
@@ -513,29 +551,44 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
 
     ad.fullScreenContentCallback = FullScreenContentCallback(
       onAdShowedFullScreenContent: (_) {
-        log('Interstitial', 'shown');
+        log('Interstitial', 'ad_showed');
         cadence.shown(DateTime.now());
       },
       onAdDismissedFullScreenContent: (_) {
-        log('Interstitial', 'dismissed');
+        log('Interstitial', 'ad_dismissed');
         finish();
       },
       onAdImpression: (_) => log('Interstitial', 'impression'),
       onAdFailedToShowFullScreenContent: (_, error) {
-        log('Interstitial', 'show failed: ${error.code} ${error.message}');
+        log(
+          'Interstitial',
+          'show_fail code=${error.code} domain=${error.domain} message=${error.message}',
+        );
         finish();
       },
     );
     try {
       await ad.show();
       await done.future;
-    } catch (_) {
+    } catch (error) {
+      log('Interstitial', 'show_fail exception=${error.runtimeType}');
       finish();
     }
   }
 
+  String? _showBlockedReason() => _disposed
+      ? 'disposed'
+      : !ready || _privacyUpdating
+      ? 'sdk_or_consent_not_ready'
+      : !_foreground
+      ? 'app_not_foreground'
+      : showing
+      ? 'ad_already_showing'
+      : null;
+
   Future<void> privacyOptions() async {
-    if (!privacyRequired || showing) return;
+    if (!privacyRequired || showing || _privacyUpdating || _disposed) return;
+    _privacyUpdating = true;
     ready = false;
     _consentGeneration++;
     _retry?.cancel();
@@ -543,8 +596,19 @@ class GameAds extends ChangeNotifier with WidgetsBindingObserver {
     _rewarded?.dispose();
     _rewarded = null;
     notifyListeners();
-    await ConsentForm.showPrivacyOptionsForm((error) {});
-    ready = await ConsentInformation.instance.canRequestAds();
+    try {
+      await ConsentForm.showPrivacyOptionsForm((error) {
+        if (error != null) log('UMP', 'privacy form error: ${error.message}');
+      });
+      if (_disposed) return;
+      ready = await ConsentInformation.instance.canRequestAds();
+    } finally {
+      _privacyUpdating = false;
+    }
+    if (_disposed) return;
+    // Any old request failure backoff belongs to the previous consent epoch.
+    _nextInterstitialLoad = null;
+    _nextRewardLoad = null;
     if (!_disposed) notifyListeners();
     _interstitial?.dispose();
     _interstitial = null;

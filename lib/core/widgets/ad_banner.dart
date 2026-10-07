@@ -75,7 +75,7 @@ class _NativeBannerState extends State<_NativeBanner> {
         if (generation == _generation) _loading = false;
         return;
       }
-      GameAds.log('Banner', 'load requested');
+      GameAds.log('Banner', 'load_start width=$_width');
       final ad = BannerAd(
         adUnitId: GameAds.bannerId,
         size: size,
@@ -90,7 +90,7 @@ class _NativeBannerState extends State<_NativeBanner> {
             _retry?.cancel();
             _failures = 0;
             setState(() => loaded = true);
-            GameAds.log('Banner', 'loaded');
+            GameAds.log('Banner', 'load_success');
           },
           onAdImpression: (_) => GameAds.log('Banner', 'impression'),
           onAdFailedToLoad: (ad, error) {
@@ -112,7 +112,7 @@ class _NativeBannerState extends State<_NativeBanner> {
       _ad?.dispose();
       _ad = null;
       _scheduleRetry(generation);
-      GameAds.log('Banner', 'load exception: $error');
+      GameAds.log('Banner', 'load_fail exception=${error.runtimeType}');
       /* No network/platform: keep the game usable without a blank bar. */
     }
   }

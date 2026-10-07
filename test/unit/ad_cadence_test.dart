@@ -19,6 +19,7 @@ void main() {
 
     cadence.completeRound(12);
     cadence.completeRound(12);
+    expect(cadence.eligible(start.add(const Duration(seconds: 178))), isFalse);
     expect(cadence.eligible(start.add(const Duration(seconds: 179))), isTrue);
   });
 
