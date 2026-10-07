@@ -274,32 +274,37 @@ class _GameScreenState extends ConsumerState<GameScreen>
       );
       if (watch == true && mounted) {
         setState(() => purchasing = true);
-        final earned = await ref.read(adProvider).showContinueReward();
-        if (earned && mounted) {
-          final rewardedHint = await ref
-              .read(progressProvider.notifier)
-              .claimHintFromReward(game);
-          if (rewardedHint != null) {
-            setState(() {
-              hint = rewardedHint;
-              selected = rewardedHint.$1;
-              hintNotice = tr(
-                ref,
-                'Reklam ödülüyle ipucu açıldı!',
-                'Hint unlocked from ad reward!',
-              );
-            });
-            return;
+        try {
+          final earned = await ref.read(adProvider).showContinueReward();
+          if (earned && mounted) {
+            final rewardedHint = await ref
+                .read(progressProvider.notifier)
+                .claimHintFromReward(game);
+            if (!mounted) return;
+            if (rewardedHint != null) {
+              setState(() {
+                hint = rewardedHint;
+                selected = rewardedHint.$1;
+                hintNotice = tr(
+                  ref,
+                  'Reklam ödülüyle ipucu açıldı!',
+                  'Hint unlocked from ad reward!',
+                );
+              });
+              return;
+            }
           }
-        }
-        if (mounted) {
-          setState(
-            () => hintNotice = tr(
-              ref,
-              'Reklam ödülü alınamadı.',
-              'Ad reward was not earned.',
-            ),
-          );
+          if (mounted) {
+            setState(
+              () => hintNotice = tr(
+                ref,
+                'Reklam ödülü alınamadı.',
+                'Ad reward was not earned.',
+              ),
+            );
+          }
+        } finally {
+          if (mounted) setState(() => purchasing = false);
         }
       }
       return;
